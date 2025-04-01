@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,8 +40,10 @@ void handle_quit();
 void check_time_max();
 void sigchld_handler(int sig);
 void sigint_handler(int sig);
+void sigalrm_handler(int sig);
 void print_process_stats(ProcessInfo *process);
 void terminate_process(int index, int signal);
+void setup_timer();
 
 int main(int argc, char *argv[]) {
     if (argc > 1) {
@@ -67,12 +70,21 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    sa.sa_handler = sigalrm_handler;
+    if (sigaction(SIGALRM, &sa, NULL) == -1) {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
+
+    setup_timer();
+
     printf("DCCAdmin iniciado. time_max=%d\n", time_max);
     printf("Ingrese comandos (start, info, timeout, quit):\n");
 
     while (1) {
-        if (time_max > 0) {
-            check_time_max();
+        if (signal_received) {
+            handle_quit();
+            exit(EXIT_SUCCESS);
         }
         
         printf("> ");
@@ -88,6 +100,21 @@ int main(int argc, char *argv[]) {
         free_user_input(input);
     }
     return EXIT_SUCCESS;
+}
+
+void setup_timer() {
+    struct itimerval timer = {
+        .it_interval = { .tv_sec = 1, .tv_usec = 0 },  // Intervalo de 1s
+        .it_value = { .tv_sec = 1, .tv_usec = 0 }      // Primera activación en 1s
+    };
+    setitimer(ITIMER_REAL, &timer, NULL);
+}
+
+void sigalrm_handler(int sig) {
+    (void)sig;
+    if (time_max > 0) {
+        check_time_max();
+    }
 }
 
 void execute_command(char **input) {
@@ -246,7 +273,7 @@ void check_time_max() {
         if (!processes[i].terminated && !processes[i].timeout_sent) {
             double elapsed = difftime(now, processes[i].start_time);
             if (elapsed >= time_max) {
-                printf("Proceso %d (%s) alcanzó time_max (%d segundos)\n", 
+                printf("[TIMEOUT] Proceso %d (%s) alcanzó time_max (%d segundos)\n", 
                        processes[i].pid, processes[i].executable, time_max);
                 terminate_process(i, SIGTERM);
                 processes[i].timeout_sent = true;
@@ -256,6 +283,7 @@ void check_time_max() {
 }
 
 void sigchld_handler(int sig) {
+    (void)sig;
     int status;
     pid_t pid;
     
@@ -280,9 +308,9 @@ void sigchld_handler(int sig) {
 }
 
 void sigint_handler(int sig) {
+    (void)sig;
     printf("\nRecibida señal SIGINT (Ctrl+C)\n");
-    handle_quit();
-    exit(EXIT_SUCCESS);
+    signal_received = 1;
 }
 
 void print_process_stats(ProcessInfo *process) {
@@ -298,20 +326,24 @@ void print_process_stats(ProcessInfo *process) {
 }
 
 void terminate_process(int index, int signal) {
-    if (!processes[index].terminated) {
-        kill(processes[index].pid, signal);
-        processes[index].signal_value = signal;
+    if (processes[index].terminated) return;
+
+    kill(processes[index].pid, signal);
+    processes[index].signal_value = signal;
+    
+    if (signal == SIGTERM && !processes[index].timeout_sent) {
+        processes[index].timeout_sent = true;
         
-        if (signal == SIGTERM) {
-            // Programar SIGKILL para 5 segundos después si se envió SIGTERM
-            pid_t pid = fork();
-            if (pid == 0) {
-                sleep(5);
-                if (!processes[index].terminated) {
-                    kill(processes[index].pid, SIGKILL);
-                }
-                exit(0);
+        // Programar SIGKILL para 5 segundos después de manera asíncrona
+        pid_t killer_pid = fork();
+        if (killer_pid == 0) {
+            sleep(5);
+            if (!processes[index].terminated) {
+                kill(processes[index].pid, SIGKILL);
             }
+            exit(EXIT_SUCCESS);
         }
+    } else {
+        processes[index].terminated = true;
     }
 }
