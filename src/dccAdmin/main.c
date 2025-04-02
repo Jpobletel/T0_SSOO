@@ -31,7 +31,7 @@ int process_count = 0;
 int time_max = 0;
 volatile sig_atomic_t signal_received = 0;
 
-// Function prototypes
+//definiciones
 void execute_command(char **input);
 void start_process(char *executable, char **args);
 void show_info();
@@ -54,7 +54,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Configurar manejadores de señales
     struct sigaction sa;
     sa.sa_handler = sigchld_handler;
     sigemptyset(&sa.sa_mask);
@@ -63,39 +62,33 @@ int main(int argc, char *argv[]) {
         perror("sigaction");
         exit(EXIT_FAILURE);
     }
-
     sa.sa_handler = sigint_handler;
     if (sigaction(SIGINT, &sa, NULL) == -1) {
         perror("sigaction");
         exit(EXIT_FAILURE);
     }
-
     sa.sa_handler = sigalrm_handler;
     if (sigaction(SIGALRM, &sa, NULL) == -1) {
         perror("sigaction");
         exit(EXIT_FAILURE);
     }
-
     setup_timer();
-
-    printf("DCCAdmin iniciado. time_max=%d\n", time_max);
+    // printf("inicio DCCadmin. time_max=%d\n", time_max); 
+    printf("DCCAdmin iniciado. time_max=%d\n", time_max); 
     printf("Ingrese comandos (start, info, timeout, quit):\n");
-
     while (1) {
         if (signal_received) {
             handle_quit();
             exit(EXIT_SUCCESS);
         }
-        
         printf("> ");
         fflush(stdout);
-        
         char **input = read_user_input();
         if (input[0] == NULL) {
             free_user_input(input);
+            // break;
             continue;
         }
-        
         execute_command(input);
         free_user_input(input);
     }
@@ -104,19 +97,17 @@ int main(int argc, char *argv[]) {
 
 void setup_timer() {
     struct itimerval timer = {
-        .it_interval = { .tv_sec = 1, .tv_usec = 0 },  // Intervalo de 1s
-        .it_value = { .tv_sec = 1, .tv_usec = 0 }      // Primera activación en 1s
+        .it_interval = { .tv_sec = 1, .tv_usec = 0 },
+        .it_value = { .tv_sec = 1, .tv_usec = 0 }
     };
     setitimer(ITIMER_REAL, &timer, NULL);
 }
-
 void sigalrm_handler(int sig) {
     (void)sig;
     if (time_max > 0) {
         check_time_max();
     }
 }
-
 void execute_command(char **input) {
     if (strcmp(input[0], "start") == 0) {
         if (input[1] == NULL) {
@@ -135,7 +126,7 @@ void execute_command(char **input) {
         }
         int time = atoi(input[1]);
         if (time <= 0) {
-            printf("Error: El tiempo debe ser positivo\n");
+            printf("Error: El tiempo debe ser positivo\n"); //revisar print si es el formato
             return;
         }
         handle_timeout(time);
@@ -148,13 +139,11 @@ void execute_command(char **input) {
         printf("Comando no reconocido: %s\n", input[0]);
     }
 }
-
 void start_process(char *executable, char **args) {
     if (process_count >= MAX_PROCESSES) {
         printf("Error: Se ha alcanzado el máximo de procesos concurrentes\n");
         return;
     }
-    
     pid_t pid = fork();
     if (pid < 0) {
         perror("Error al crear proceso hijo");
@@ -173,17 +162,15 @@ void start_process(char *executable, char **args) {
         processes[process_count].timeout_sent = false;
         processes[process_count].exit_code = -1;
         processes[process_count].signal_value = -1;
-        process_count++;
+        process_count++; // necesitamos aumentar esto?
         printf("Proceso iniciado con PID: %d\n", pid);
     }
 }
-
 void show_info() {
     printf("Procesos en ejecución:\n");
     printf("PID\tEjecutable\tTiempo\tExit\tSignal\n");
     time_t now = time(NULL);
     bool any_process = false;
-    
     for (int i = 0; i < process_count; i++) {
         if (!processes[i].terminated) {
             any_process = true;
@@ -196,7 +183,6 @@ void show_info() {
                    processes[i].signal_value);
         }
     }
-    
     if (!any_process) {
         printf("No hay procesos en ejecución\n");
     }
@@ -210,18 +196,14 @@ void handle_timeout(int timeout_secs) {
             break;
         }
     }
-    
     if (!any_process) {
         printf("No hay procesos en ejecución. Timeout no se puede ejecutar.\n");
         return;
     }
-    
     printf("Esperando %d segundos...\n", timeout_secs);
     sleep(timeout_secs);
-    
     printf("Timeout cumplido!\n");
     time_t now = time(NULL);
-    
     for (int i = 0; i < process_count; i++) {
         if (!processes[i].terminated) {
             double elapsed = difftime(now, processes[i].start_time);
@@ -231,7 +213,6 @@ void handle_timeout(int timeout_secs) {
                    elapsed,
                    processes[i].exit_code,
                    processes[i].signal_value);
-            
             terminate_process(i, SIGTERM);
         }
     }
@@ -239,36 +220,27 @@ void handle_timeout(int timeout_secs) {
 
 void handle_quit() {
     printf("Terminando DCCAdmin...\n");
-    
-    // Primero enviar SIGINT a todos los procesos
     for (int i = 0; i < process_count; i++) {
         if (!processes[i].terminated) {
             kill(processes[i].pid, SIGINT);
             processes[i].signal_value = SIGINT;
         }
     }
-    
-    // Esperar 10 segundos
     sleep(10);
-    
-    // Enviar SIGKILL a los procesos que aún no terminaron
     for (int i = 0; i < process_count; i++) {
         if (!processes[i].terminated) {
             kill(processes[i].pid, SIGKILL);
             processes[i].signal_value = SIGKILL;
         }
     }
-    
-    // Mostrar estadísticas finales
     printf("DCCAdmin finalizado\n");
-    for (int i = 0; i < process_count; i++) {
+    for (int i = 0; i < process_count; i++) { //agregar columnas de tabla?
         print_process_stats(&processes[i]);
     }
 }
 
 void check_time_max() {
     time_t now = time(NULL);
-    
     for (int i = 0; i < process_count; i++) {
         if (!processes[i].terminated && !processes[i].timeout_sent) {
             double elapsed = difftime(now, processes[i].start_time);
@@ -316,7 +288,6 @@ void sigint_handler(int sig) {
 void print_process_stats(ProcessInfo *process) {
     time_t now = time(NULL);
     double elapsed = difftime(now, process->start_time);
-    
     printf("%d %s %.0f %d %d\n", 
            process->pid, 
            process->executable, 
@@ -333,8 +304,6 @@ void terminate_process(int index, int signal) {
     
     if (signal == SIGTERM && !processes[index].timeout_sent) {
         processes[index].timeout_sent = true;
-        
-        // Programar SIGKILL para 5 segundos después de manera asíncrona
         pid_t killer_pid = fork();
         if (killer_pid == 0) {
             sleep(5);
